@@ -7,55 +7,7 @@ use std::fs::File;
 use rand::seq::SliceRandom;
 use rand::prelude::IndexedRandom;
 
-fn read_to_hashmap(path: &str) -> HashMap<String, String> {
-    let mut result: HashMap<String, String> = HashMap::new();
-    let file = File::open(path).expect("Could not open file");
-    let buf_reader = std::io::BufReader::new(file).lines();
-    for line in buf_reader {
-        let line_str = line.expect("Error reading");
-        let v: Vec<&str> = line_str.trim().split(',').collect();
-        let k = v[0].to_string();
-        let y = v[1].to_string();
-
-        result.insert(k, y);
-    }
-
-    return result
-}
-
-fn read_file_directed(path: &str) -> HashMap<String, HashSet<String>> {
-    let mut result: HashMap<String, HashSet<String>> = HashMap::new();
-    let file = File::open(path).expect("Could not open file");
-    let buf_reader = std::io::BufReader::new(file).lines();
-    let mut line_number = 0;
-    for line in buf_reader {
-        let line_str = line.expect("Error reading");
-        // println!("{}", line_str);
-        let v: Vec<&str> = line_str.trim().split(',').collect();
-        line_number += 1;
-        if line_number == 1 {
-            continue;
-        }
-        let k = v[0].to_string();
-        let y = v[1].to_string();
-        // println!("{}, {}", k, y);
-        
-        if let Some(nodes) = result.get(&k) { // if k exists in hashmap
-            // insert y into the hashset
-            let mut nodes = nodes.clone();
-            nodes.insert(y);
-            result.insert(k, nodes);
-        }
-        else { // if k doesn't exist in hashmap
-            // create a new hashset and insert y into it
-            let mut first: HashSet<String> = HashSet::new();
-            first.insert(y);
-            result.insert(k, first);
-        }
-        
-    }
-    return result
-}
+mod fileread
 
 fn dfs_with_time_pruned(
     graph: &HashMap<String, HashSet<String>>,
@@ -80,7 +32,6 @@ fn dfs_with_time_pruned(
         }
     }
 
-    // 저장 조건: 더 이상 확장 불가한 종단 경로만 저장
     if !extended {
         all_paths.push(path.clone());
     }
@@ -106,9 +57,9 @@ fn collect_maximal_paths_time_filtered(
 #[derive(Debug, Clone)]
 struct TxEdge {
     txname: String,
-    start: usize,      // 계좌 A
-    end: usize,        // 계좌 B
-    timestamp: usize,  // features에서 추출한 시점
+    start: usize,      
+    end: usize,        
+    timestamp: usize, 
 }
 
 fn assign_accounts_from_paths(
@@ -122,7 +73,7 @@ fn assign_accounts_from_paths(
         let mut prev_end: Option<usize> = None;
         for tx in path {
             if tx_to_account.contains_key(tx) {
-                prev_end = Some(tx_to_account[tx].end); // 이미 있는 경우 skip
+                prev_end = Some(tx_to_account[tx].end); 
                 continue;
             }
 
@@ -162,9 +113,9 @@ fn build_weighted_account_graph(
         let entry = graph.entry(edge.start).or_insert_with(Vec::new);
 
         if let Some(pos) = entry.iter_mut().find(|(to, _)| *to == edge.end) {
-            pos.1 += 1; // 이미 있으면 카운트 증가
+            pos.1 += 1; 
         } else {
-            entry.push((edge.end, 1)); // 새 연결 추가
+            entry.push((edge.end, 1));
         }
     }
 
@@ -173,11 +124,11 @@ fn build_weighted_account_graph(
 
 fn main() {
     println!("Reading.");
-    let labels = read_to_hashmap("../../elliptic_txs_classes.csv");
+    let labels = fileread::read_to_hashmap("../../elliptic_txs_classes.csv");
     println!("Reading..");
-    let edges = read_file_directed("../../elliptic_txs_edgelist.csv");
+    let edges = fileread::read_file_directed("../../elliptic_txs_edgelist.csv");
     println!("Reading...");
-    let raw_timestamps = read_to_hashmap("../../elliptic_txs_features.csv");
+    let raw_timestamps = fileread::read_to_hashmap("../../elliptic_txs_features.csv");
 
     let timestamps: HashMap<String, usize> = raw_timestamps
         .into_iter()
@@ -197,7 +148,7 @@ fn main() {
     let batch_size = 100;
     let mut all_paths = Vec::new();
 
-    for i in (0..illicit_nodes.len()).step_by(batch_size) {
+    for i in (0..illicit_nodes.len()).step_by(batch_size) { // memory problem
         println!("Ayo let's see where my limit is {}", i);
         let end = usize::min(i + batch_size, illicit_nodes.len());
         let batch = &illicit_nodes[i..end].to_vec();
