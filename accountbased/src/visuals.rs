@@ -1,3 +1,5 @@
+use plotters::prelude::*;
+
 evcxr_figure!((640, 480), |root| {
     let root = root.titled("Scatter with Histogram Example", ("Arial", 20).into_font())?;
     
