@@ -35,14 +35,13 @@ pub fn find_k_cycles(
     graph: &HashMap<String, HashSet<String>>, 
     k: usize
 ) -> Vec<Vec<String>> {
+    println!("Started finding cycles!");
     let mut cycles = Vec::new();
 
     for start in graph.keys() {
-        // println!("Yoohoo!");
         let mut path = Vec::new();
         dfs_loose_cycle(graph, start, start, k, &mut path, &mut cycles);
     }
-    println!("Yoohoo!");
 
     cycles
 }
