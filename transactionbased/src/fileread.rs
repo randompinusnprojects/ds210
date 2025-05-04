@@ -57,7 +57,7 @@ pub fn read_file_directed(path: &str) -> HashMap<String, HashSet<String>> {
     return result
 }
 
-fn validate_dataset(
+pub fn validate_dataset(
     edgelist: &HashMap<String, HashSet<String>>,
     features: &HashMap<String, usize>,
     labels: &HashMap<String, String>,
@@ -76,4 +76,6 @@ fn validate_dataset(
     for (tx, label) in labels {
         assert!(["unknown", "1", "2"].contains(&label.as_str()), "Invalid label {} for {}", label, tx);
     }
+
+    println!("No Probs!");
 }

@@ -8,6 +8,16 @@ use rand::thread_rng;
 use rand::seq::SliceRandom;
 use rand::prelude::IndexedRandom;
 
+/// Performs timestamp-filtered DFS to collect all reachable nodes from start nodes.
+/// 
+/// Skips revisiting nodes and enforces monotonic time increase.
+/// 
+/// # Arguments
+/// * `graph`, `timestamps` - The transaction graph and its timestamps.
+/// * `current` - The node currently being visited.
+/// * `depth` - Current recursion depth.
+/// * `reachable` - Accumulates all reachable nodes.
+/// * `max_depth` - Max search depth to avoid combinatorial explosion.
 pub fn dfs_collect_reachable(
     graph: &HashMap<String, HashSet<String>>,
     timestamps: &HashMap<String, usize>,
@@ -45,6 +55,11 @@ pub fn dfs_collect_reachable(
     visited_on_path.remove(current);
 }
 
+/// DFS to collect full valid paths from `start → target` while respecting timestamp ordering.
+/// 
+/// # Returns
+/// Fills `all_paths` with paths satisfying the constraints.
+///
 pub fn dfs_collect_paths(
     graph: &HashMap<String, HashSet<String>>,
     timestamps: &HashMap<String, usize>,
@@ -83,7 +98,12 @@ pub fn dfs_collect_paths(
     visited.remove(current);
 }
 
-
+/// Summary DFS: Instead of storing all paths, just records number of valid paths and their cumulative depth.
+/// 
+/// Enforces max path count per (start, target) to avoid explosion.
+/// 
+/// # Updates
+/// * `stats`: (start, target) → (num_paths, total_depth)
 pub fn dfs_summary(
     graph: &HashMap<String, HashSet<String>>,
     timestamps: &HashMap<String, usize>,
@@ -153,7 +173,10 @@ pub fn dfs_summary(
     visited_on_path.remove(current);
 }
 
-
+/// Entry point for DFS summary given multiple start/end node combinations.
+/// 
+/// # Returns
+/// Map from (start, end) → (num paths, total depth).
 pub fn summarize_paths_to_targets(
     graph: &HashMap<String, HashSet<String>>,
     timestamps: &HashMap<String, usize>,

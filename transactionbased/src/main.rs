@@ -10,19 +10,18 @@ use rand::prelude::IndexedRandom;
 
 mod fileread;
 mod dfsstuff;
+mod cycles;
 
-fn top_outdegree_calculator(
-    graph: &HashMap<String, HashSet<String>>,
-    limit: usize,
-) -> Vec<String> {
-    let mut degrees: Vec<_> = graph
-        .iter()
-        .map(|(node, neighbors)| (node.clone(), neighbors.len()))
-        .collect();
-    degrees.sort_by(|a, b| b.1.cmp(&a.1));
-    degrees.into_iter().take(limit).map(|(node, _)| node).collect()
-}
-
+/// Calculates reachable nodes from given starting points using timestamp-filtered DFS.
+/// 
+/// # Arguments
+/// * `graph` - Adjacency list of the transaction graph.
+/// * `timestamps` - Node → timestamp map.
+/// * `start_nodes` - List of start nodes (e.g. illicit or licit).
+/// * `depth` - Max depth to explore.
+///
+/// # Returns
+/// A set of reachable nodes (used to define meaningful DFS targets).
 fn reachable_calculator(
     graph: &HashMap<String, HashSet<String>>,
     timestamps: &HashMap<String, usize>,
@@ -45,6 +44,15 @@ fn reachable_calculator(
     reachable
 }
 
+
+/// Samples N nodes from a given list.
+/// 
+/// # Arguments
+/// * `nodes` - Vector of node IDs as Strings.
+/// * `limit` - Number of nodes to sample.
+///
+/// # Returns
+/// A randomly sampled vector of node IDs.
 fn sampler(nodes: Vec<String>, limit: usize) -> Vec<String> {
     let mut rng = thread_rng();
     let sample: Vec<String> = nodes
@@ -54,15 +62,28 @@ fn sampler(nodes: Vec<String>, limit: usize) -> Vec<String> {
     sample
 }
 
+
+/// Runs the full pipeline on a labeled node group (illicit or licit).
+/// 
+/// # Arguments
+/// * `edges` - Full transaction graph.
+/// * `timestamps` - Timestamps of each node.
+/// * `start_nodes` - Labeled starting points.
+/// * `label` - `"illicit"` or `"licit"` (for logging).
+///
+/// # Returns
+/// A frequency map of intermediary nodes appearing in filtered paths.
 fn theory_tester(
     edges: &HashMap<String, HashSet<String>>,
     timestamps: &HashMap<String, usize>,
     start_nodes: &Vec<String>,
     label: &str,  // "illicit" or "licit"
+    max_depth: usize,
+    max_path: usize,
 ) -> HashMap<String, usize> {
     let mut rng = thread_rng();
 
-    let reachable = reachable_calculator(edges, timestamps, start_nodes, 10); // adjust if needed
+    let reachable = reachable_calculator(edges, timestamps, start_nodes, max_depth); // adjust if needed
     println!("[{}] Reachable count: {}", label, reachable.len());
 
     let mut degrees_reachable: Vec<(String, usize)> = reachable
@@ -80,7 +101,7 @@ fn theory_tester(
 
     let sampled_targets = sampler(top_outdegree_reachable.clone(), 100);
 
-    let stats = dfsstuff::summarize_paths_to_targets(edges, timestamps, start_nodes, &sampled_targets, 15, 100); // adjust if needed
+    let stats = dfsstuff::summarize_paths_to_targets(edges, timestamps, start_nodes, &sampled_targets, max_depth, max_path); // adjust if needed
     
     let mut stat_entries: Vec<_> = stats.iter().collect();
     stat_entries.sort_by(|a, b| b.1.0.cmp(&a.1.0));  // by path count
@@ -131,6 +152,15 @@ struct MixerStats {
     ci_high: f64,
 }
 
+
+/// Computes the "mixer score" of nodes based on frequency imbalance between illicit and licit contexts.
+/// 
+/// # Arguments
+/// * `node_freq_illicit` - Node → count (illicit paths).
+/// * `node_freq_licit` - Node → count (licit paths).
+///
+/// # Returns
+/// A list of tuples with: node ID, licit freq, illicit freq, and mixer score.
 fn compute_mixer_data(
     node_freq_illicit: &HashMap<String, usize>,
     node_freq_licit: &HashMap<String, usize>,
@@ -151,6 +181,13 @@ fn compute_mixer_data(
     mixer_data
 }
 
+/// Aggregates mixer scores from repeated sampling, computing mean and confidence intervals.
+/// 
+/// # Arguments
+/// * `score_map` - Node → list of scores across sampling runs.
+///
+/// # Returns
+/// A sorted list of mixer candidates and stats (mean, stddev, CI).
 fn summarize_scores(score_map: HashMap<String, Vec<f64>>) -> Vec<MixerStats> { // GPT
     let mut result = vec![];
     for (node, scores) in score_map {
@@ -176,8 +213,14 @@ fn summarize_scores(score_map: HashMap<String, Vec<f64>>) -> Vec<MixerStats> { /
 
 
 fn main() {
+    let num_runs = 10; // adjust if needed
+    let sample_size = 100; // adjust if needed
+    let max_depth = 10; // adjust if needed
+    let max_path = 100; // adjust if needed
+
     println!("Reading.");
-    let labels = fileread::read_to_hashmap("../../elliptic_txs_classes.csv");
+    let mut labels = fileread::read_to_hashmap("../../elliptic_txs_classes.csv");
+    labels.remove("txId"); // only file w first row as header
     println!("Reading..");
     let edges = fileread::read_file_directed("../../elliptic_txs_edgelist.csv");
     println!("Reading...");
@@ -189,6 +232,11 @@ fn main() {
         .collect();
 
     println!("Finished reading!");
+
+    fileread::validate_dataset(&edges, &timestamps, &labels);
+    let cycles = cycles::find_k_cycles(&edges, 3); // max_depth would be logical, but computing time wise (from trial and error) 6 is ok
+
+    println!("Cycles: {:?}", cycles);
 
     let mut licit_nodes = Vec::new();
     for (k, v) in labels.iter() {
@@ -207,14 +255,13 @@ fn main() {
     println!("Found illicit nodes");
 
     let mut score_map: HashMap<String, Vec<f64>> = HashMap::new();
-    let num_runs = 10; // adjust if needed
 
     for _ in 0..num_runs {
-        let sampled_illicit_nodes = sampler(illicit_nodes.clone(), 100);
-        let sampled_licit_nodes = sampler(licit_nodes.clone(), 100);
+        let sampled_illicit_nodes = sampler(illicit_nodes.clone(), sample_size);
+        let sampled_licit_nodes = sampler(licit_nodes.clone(), sample_size);
     
-        let node_freq_illicit = theory_tester(&edges, &timestamps, &sampled_illicit_nodes, "illicit");
-        let node_freq_licit = theory_tester(&edges, &timestamps, &sampled_licit_nodes, "licit");
+        let node_freq_illicit = theory_tester(&edges, &timestamps, &sampled_illicit_nodes, "illicit", max_depth, max_path);
+        let node_freq_licit = theory_tester(&edges, &timestamps, &sampled_licit_nodes, "licit", max_depth, max_path);
     
         let mixer_data = compute_mixer_data(&node_freq_illicit, &node_freq_licit);
 
@@ -222,8 +269,6 @@ fn main() {
             score_map.entry(node).or_default().push(score);
         }
     }
-
-    println!("Almost there!");
 
     let final_stats = summarize_scores(score_map);
 
