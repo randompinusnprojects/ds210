@@ -1,25 +1,40 @@
 # Elliptic Bitcoin Transaction Analysis (Rust)
 
+---
+
 ## A. Project Overview
 
-**Goal:**  
-To analyze Bitcoin transaction patterns from the [Elliptic dataset](https://www.kaggle.com/datasets/ellipticco/elliptic-data-set) to detect signs of money laundering or non-standard financial behavior—particularly via **intermediary reuse** and **account structure reconstruction**.
+**Goal:**
+Detect potential money laundering behavior on the Elliptic Bitcoin dataset by analyzing **temporal transaction paths** and identifying **hub-like intermediaries** reused disproportionately in illicit flows compared to licit ones.
 
-**Dataset:**  
-- Source: Elliptic dataset (elliptic_txs_classes.csv, elliptic_txs_edgelist.csv, elliptic_txs_features.csv)
-- Size: ~650MB (features file too large for GitHub)
+**Key Hypothesis:**
+Nodes reused in multiple time-respecting transaction paths from illicit start points—but not from licit ones—may represent mixers or anonymization services.
+
+**Dataset:**
+
+* [Elliptic dataset on Kaggle](https://www.kaggle.com/datasets/ellipticco/elliptic-data-set)
+* Files used:
+
+  * `elliptic_txs_edgelist.csv` — directed transaction graph
+  * `elliptic_txs_classes.csv` — label file (licit, illicit, unknown)
+  * `elliptic_txs_features.csv` — timestamps for each transaction
+* Total size: \~650MB (features file too large for GitHub)
 
 ---
 
 ## B. Data Processing
 
-**Loading Method:**  
-Custom `fileread.rs` module that:
-- Reads CSVs into `HashMap<String, HashSet<String>>` (edgelist) or `HashMap<String, String>` (labels, timestamps).
+**Loading Method:**
+All CSVs are parsed using custom Rust module `fileread.rs`:
 
-**Transformations Applied:**
-- Converted transaction-based graph into an **inferred account-based graph**, using timestamp-filtered paths.
-- Filtered transaction paths to respect temporal ordering (e.g., txB cannot follow txA if its timestamp is earlier).
+* Graph: `HashMap<String, HashSet<String>>` (from edgelist)
+* Labels and timestamps: `HashMap<String, String>` → then parsed into `usize`
+
+**Cleaning / Transformation:**
+
+* Paths are pruned to only respect **non-decreasing timestamps**
+* Maximum path length and number of paths per (start, end) pair are capped to avoid exponential blowup
+* Nodes are sampled from reachable sets rather than full enumeration to limit memory pressure
 
 ---
 
@@ -27,72 +42,164 @@ Custom `fileread.rs` module that:
 
 ### Modules
 
-- `fileread.rs`: CSV loading utilities.
-- `main.rs`: Path traversal, timestamp filtering, account assignment, analysis.
+* `fileread.rs` — reads edgelist, features, labels into appropriate Rust types.
+* `dfsstuff.rs` — DFS-based path analysis functions (reachable node discovery, path enumeration, stats).
+* `main.rs` — sampling, scoring, orchestration of full experiment.
 
-### Key Functions
+---
 
-#### `collect_maximal_paths_time_filtered`
+### Key Functions and Logic
 
-- **Purpose:**  
-  Traverse all paths forward in time while preventing temporal inconsistencies and node revisits.
-- **Input:**  
-  Graph, timestamp map, list of start nodes.
-- **Output:**  
-  Vector of transaction paths.
-- **Core Logic:**  
-  DFS traversal while enforcing monotonic increase in timestamps.
+#### `dfsstuff::dfs_summary`
 
-#### `assign_accounts_from_paths`
+* **Purpose:** Count all time-respecting paths from start to target (up to limits).
+* **Inputs:** graph, timestamps, start/target node, depth & path caps
+* **Outputs:** `HashMap<(start, target), (path_count, total_depth)>`
+* **Key logic:** DFS with temporal monotonicity + visited set + early cutoff on depth/path count.
 
-- **Purpose:**  
-  Assign synthetic account IDs to transactions based on sequential path order.
-- **Input:**  
-  Paths, timestamp map.
-- **Output:**  
-  `HashMap<String, TxEdge>` where each transaction gets a (start_account, end_account).
-- **Core Logic:**  
-  Reuses end account of previous tx as start of current one. Allocates new accounts otherwise.
+#### `dfsstuff::dfs_collect_paths`
 
-#### `build_weighted_account_graph`
+* **Purpose:** Actually store full paths for top start-target pairs.
+* **Used for:** Detecting reused intermediaries.
 
-- **Purpose:**  
-  Aggregate account-to-account edges from assigned transaction mappings.
-- **Output:**  
-  `HashMap<usize, Vec<(usize, usize)>>` representing adjacency list with edge weight (repetition count).
+#### `theory_tester`
+
+* **Purpose:** From sampled illicit or licit nodes, compute top hub-like intermediaries.
+* **Steps:**
+
+  * Find reachable high-outdegree nodes.
+  * Sample (start, target) pairs.
+  * Summarize path stats and collect full paths for top pairs.
+  * Tally reused nodes in middle of paths.
+
+#### `compute_mixer_data`
+
+* Computes score = `illicit_count / (licit_count + 1.0)` for each reused node.
+
+#### `summarize_scores`
+
+* Aggregates scores over multiple samplings.
+* Reports mean, stddev, 95% confidence interval for each candidate node.
+
+---
+
+### Main Workflow
+
+1. Sample 100 illicit and 100 licit nodes.
+2. For each:
+
+   * Compute top reused intermediaries.
+   * Tally node reuse frequency.
+3. Calculate mixer score across `num_runs` (e.g. 10).
+4. Rank all nodes by average score and confidence.
+
+---
+
+## D. Tests
+
+Use `cargo test` to run:
+
+```bash
+cargo test
+```
+
+### Included Tests:
+
+* `test_dfs_summarize`: verifies path counting in toy DAG
+* `test_dfs_summarize_2`: ensures behavior when all timestamps are equal
+* **Assertions:** total path count and total depth are both checked (e.g., count = 3, depth = 12)
 
 ---
 
 ## E. Results
 
-- Top reused intermediary nodes were identifiable after path reconstruction.
-- Edge weight distribution showed most account-level edges were used only once.
-- Larger reuse patterns only emerge in specific clusters of illicit transactions.
+### Example Output:
+
+```
+[illicit] 94407937 → 156055502 has 49 full paths
+[licit] 355009655 → 355009675 has 10 full paths
+
+[illicit] High-degree hub reused: 155576355 (52 times)
+[licit] High-degree hub reused: 355009675 (1 times)
+
+Top 20 Mixer Candidates by Mean Score:
+Node            Mean     StdDev       95% CI Low          95% CI High
+155576355         4.2        1.5             3.5                  4.9
+135011010         3.8        1.2             3.3                  4.3
+...
+```
+
+**Interpretation:**
+High score + narrow confidence range indicates stable signal across samples.
+Illicit paths frequently share intermediaries absent in licit samples → potential mixers.
+
+---
 
 ## F. Usage Instructions
 
-To run the project:
+### Build:
 
-TBD
+```bash
+cargo build --release
+```
 
-## G. Current Problems to Solve
+### Run:
 
-### Loss of Path Fidelity Post-Account Assignment
+```bash
+cargo run
+```
 
-- Once transaction paths are transformed into an account graph, the exact temporal and structural fidelity of paths is lost.
-- Any subsequent intermediary detection or motif analysis done purely on the account-level graph may reflect paths that were not actually possible.
+Adjust `num_runs`, `sample_size `, `max_depth `, `max_path` as needed, will vary runtime a **lot**.
 
-### Memory Constraints for Full Graph Traversal
+**Expected Runtime:**
+\~2–4 minutes depending on machine (due to DFS with depth limits and sampling loop).
 
-- Enumerating full transaction paths (especially from all illicit nodes) leads to OOM errors.
-- Currently mitigated via batching, but limits global path-based analyses.
+**Dependencies:**
 
-### Indistinguishable Intermediaries
+* `rand`
+---
 
-#### Intermediary reuse patterns may arise due to:
+## G. AI-Assistance Disclosure and Citations
 
-- Legitimate batching (e.g. exchanges or mixers)
+### ChatGPT Used For:
 
-- Illicit aggregation
+* Structuring path counting and limiting logic
+* Code organization suggestions
+* Statistical score interpretation and CI calculation
+* Minor debugging assistance during DFS development
 
-Without additional address-level metadata, disambiguating these scenarios is difficult.
+**Verification:**
+All generated snippets were manually reviewed, benchmarked with toy graphs, and confirmed via `cargo test`.
+
+```bash
+fn summarize_scores(score_map: HashMap<String, Vec<f64>>) -> Vec<MixerStats> { // GPT
+    let mut result = vec![];
+    for (node, scores) in score_map {
+        let n = scores.len() as f64;
+        let mean = scores.iter().copied().sum::<f64>() / n;
+        let variance = scores.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / n; // equation for variance is \sum(x - mean)^2
+        let stddev = variance.sqrt();
+        let ci_margin = 1.96 * stddev / n.sqrt(); // This is computing confidence interval, 1.96 is used for 95% CI
+
+        result.push(MixerStats {
+            node,
+            scores,
+            mean,
+            stddev,
+            ci_low: mean - ci_margin,
+            ci_high: mean + ci_margin,
+        });
+    }
+
+    result.sort_by(|a, b| b.mean.partial_cmp(&a.mean).unwrap());
+    result
+}
+```
+
+---
+
+## H. Known Limitations
+
+* **Sampling Bias:** Still based on reachable subgraphs; might miss global patterns.
+* **Path Loss on Abstraction:** Account-level generalizations may obscure transactional detail.
+* **Reused Node Interpretation:** Some high-score nodes could be legitimate hubs (exchanges, payment aggregators).
