@@ -7,7 +7,7 @@ use std::fs::File;
 use rand::seq::SliceRandom;
 use rand::prelude::IndexedRandom;
 
-fn read_to_hashmap(path: &str) -> HashMap<String, String> {
+pub fn read_to_hashmap(path: &str) -> HashMap<String, String> {
     let mut result: HashMap<String, String> = HashMap::new();
     let file = File::open(path).expect("Could not open file");
     let buf_reader = std::io::BufReader::new(file).lines();
@@ -23,7 +23,7 @@ fn read_to_hashmap(path: &str) -> HashMap<String, String> {
     return result
 }
 
-fn read_file_directed(path: &str) -> HashMap<String, HashSet<String>> {
+pub fn read_file_directed(path: &str) -> HashMap<String, HashSet<String>> {
     let mut result: HashMap<String, HashSet<String>> = HashMap::new();
     let file = File::open(path).expect("Could not open file");
     let buf_reader = std::io::BufReader::new(file).lines();
@@ -55,4 +55,25 @@ fn read_file_directed(path: &str) -> HashMap<String, HashSet<String>> {
         
     }
     return result
+}
+
+fn validate_dataset(
+    edgelist: &HashMap<String, HashSet<String>>,
+    features: &HashMap<String, usize>,
+    labels: &HashMap<String, String>,
+) {
+    for (src, targets) in edgelist {
+        assert!(features.contains_key(src), "Missing features for src: {}", src);
+        for tgt in targets {
+            assert!(features.contains_key(tgt), "Missing features for target: {}", tgt);
+        }
+    }
+
+    for (tx, ts) in features {
+        assert!((1..=49).contains(ts), "Invalid timestamp {} for {}", ts, tx);
+    }
+
+    for (tx, label) in labels {
+        assert!(["unknown", "1", "2"].contains(&label.as_str()), "Invalid label {} for {}", label, tx);
+    }
 }

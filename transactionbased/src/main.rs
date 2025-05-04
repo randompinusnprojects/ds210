@@ -4,123 +4,176 @@ use std::collections::{HashMap, HashSet};
 use std::vec;
 use std::io::{BufReader, BufRead};
 use std::fs::File;
+use rand::thread_rng;
 use rand::seq::SliceRandom;
 use rand::prelude::IndexedRandom;
 
-mod fileread
+mod fileread;
+mod dfsstuff;
 
-fn dfs_with_time_pruned(
+fn top_outdegree_calculator(
     graph: &HashMap<String, HashSet<String>>,
-    timestamps: &HashMap<String, usize>,
-    current: &String,
-    path: &mut Vec<String>,
-    all_paths: &mut Vec<Vec<String>>,
-) {
-    path.push(current.clone());
-    let current_ts = timestamps.get(current).copied().unwrap_or(0);
-
-    let mut extended = false;
-
-    if let Some(neighbors) = graph.get(current) {
-        for neighbor in neighbors {
-            let neighbor_ts = timestamps.get(neighbor).copied().unwrap_or(usize::MAX);
-
-            if !path.contains(neighbor) && neighbor_ts >= current_ts {
-                extended = true;
-                dfs_with_time_pruned(graph, timestamps, neighbor, path, all_paths);
-            }
-        }
-    }
-
-    if !extended {
-        all_paths.push(path.clone());
-    }
-
-    path.pop();
+    limit: usize,
+) -> Vec<String> {
+    let mut degrees: Vec<_> = graph
+        .iter()
+        .map(|(node, neighbors)| (node.clone(), neighbors.len()))
+        .collect();
+    degrees.sort_by(|a, b| b.1.cmp(&a.1));
+    degrees.into_iter().take(limit).map(|(node, _)| node).collect()
 }
 
-fn collect_maximal_paths_time_filtered(
+fn reachable_calculator(
     graph: &HashMap<String, HashSet<String>>,
     timestamps: &HashMap<String, usize>,
     start_nodes: &Vec<String>,
-) -> Vec<Vec<String>> {
+    depth: usize,
+) -> HashSet<String> {
+    let mut reachable = HashSet::new();
+    let mut visited = HashSet::new();
+    for start in start_nodes {
+        dfsstuff::dfs_collect_reachable(
+            graph,
+            timestamps,
+            start,
+            1,
+            &mut visited,
+            &mut reachable,
+            depth,
+        );
+    }
+    reachable
+}
+
+fn sampler(nodes: Vec<String>, limit: usize) -> Vec<String> {
+    let mut rng = thread_rng();
+    let sample: Vec<String> = nodes
+        .choose_multiple(&mut rng, limit)
+        .cloned()
+        .collect();
+    sample
+}
+
+fn theory_tester(
+    edges: &HashMap<String, HashSet<String>>,
+    timestamps: &HashMap<String, usize>,
+    start_nodes: &Vec<String>,
+    label: &str,  // "illicit" or "licit"
+) -> HashMap<String, usize> {
+    let mut rng = thread_rng();
+
+    let reachable = reachable_calculator(edges, timestamps, start_nodes, 10); // adjust if needed
+    println!("[{}] Reachable count: {}", label, reachable.len());
+
+    let mut degrees_reachable: Vec<(String, usize)> = reachable
+        .iter()
+        .filter_map(|node| edges.get(node).map(|neighbors| (node.clone(), neighbors.len())))
+        .collect();
+
+    degrees_reachable.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let top_outdegree_reachable: Vec<String> = degrees_reachable
+        .into_iter()
+        .take(100)
+        .map(|(node, _)| node)
+        .collect();
+
+    let sampled_targets = sampler(top_outdegree_reachable.clone(), 100);
+
+    let stats = dfsstuff::summarize_paths_to_targets(edges, timestamps, start_nodes, &sampled_targets, 15, 100); // adjust if needed
+    
+    let mut stat_entries: Vec<_> = stats.iter().collect();
+    stat_entries.sort_by(|a, b| b.1.0.cmp(&a.1.0));  // by path count
+    let top_pairs: Vec<(&(String, String), &(usize, usize))> = stat_entries.into_iter().take(10).collect();
+
     let mut all_paths = Vec::new();
 
-    for start in start_nodes {
+    for ((start, target), _) in top_pairs {
+        let mut visited = HashSet::new();
         let mut path = Vec::new();
-        dfs_with_time_pruned(graph, timestamps, start, &mut path, &mut all_paths);
+    
+        dfsstuff::dfs_collect_paths(
+            edges, timestamps,
+            start, target,
+            &mut path, &mut all_paths, &mut visited,
+            1, 20,
+        );
+    
+        println!("[{}] {} → {} has {} full paths", label, start, target, all_paths.len());
     }
 
-    all_paths
-}
-
-#[derive(Debug, Clone)]
-struct TxEdge {
-    txname: String,
-    start: usize,      
-    end: usize,        
-    timestamp: usize, 
-}
-
-fn assign_accounts_from_paths(
-    paths: &Vec<Vec<String>>,
-    timestamps: &HashMap<String, usize>,
-) -> HashMap<String, TxEdge> {
-    let mut tx_to_account: HashMap<String, TxEdge> = HashMap::new();
-    let mut next_account_id = 0;
-
-    for path in paths {
-        let mut prev_end: Option<usize> = None;
-        for tx in path {
-            if tx_to_account.contains_key(tx) {
-                prev_end = Some(tx_to_account[tx].end); 
-                continue;
-            }
-
-            let ts = *timestamps.get(tx).unwrap_or(&0);
-            let start = prev_end.unwrap_or_else(|| {
-                let id = next_account_id;
-                next_account_id += 1;
-                id
-            });
-            let end = {
-                let id = next_account_id;
-                next_account_id += 1;
-                id
-            };
-
-            let edge = TxEdge {
-                txname: tx.clone(),
-                start,
-                end,
-                timestamp: ts,
-            };
-
-            tx_to_account.insert(tx.clone(), edge);
-            prev_end = Some(end);
+    let mut node_freq = HashMap::new();
+    for path in &all_paths {
+        for node in &path[1..path.len() - 1] {
+            *node_freq.entry(node.clone()).or_insert(0) += 1;
         }
     }
 
-    tx_to_account
-}
+    let high_degree_set: HashSet<String> = top_outdegree_reachable.iter().cloned().collect();
 
-fn build_weighted_account_graph(
-    tx_edges: &HashMap<String, TxEdge>
-) -> HashMap<usize, Vec<(usize, usize)>> {
-    let mut graph: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
-
-    for edge in tx_edges.values() {
-        let entry = graph.entry(edge.start).or_insert_with(Vec::new);
-
-        if let Some(pos) = entry.iter_mut().find(|(to, _)| *to == edge.end) {
-            pos.1 += 1; 
-        } else {
-            entry.push((edge.end, 1));
+    for (node, freq) in &node_freq {
+        // println!("[{}] Non High-degree hub reused: {} ({} times)", label, node, freq);
+        if high_degree_set.contains(node) {
+            println!("[{}] High-degree hub reused: {} ({} times)", label, node, freq); // comparison between intermediary and high-deg nodes
         }
     }
 
-    graph
+    println!("[{}] Done.\n", label);
+    node_freq
 }
+
+struct MixerStats {
+    node: String,
+    scores: Vec<f64>,
+    mean: f64,
+    stddev: f64,
+    ci_low: f64,
+    ci_high: f64,
+}
+
+fn compute_mixer_data(
+    node_freq_illicit: &HashMap<String, usize>,
+    node_freq_licit: &HashMap<String, usize>,
+) -> Vec<(String, u32, u32, f64)> {
+    let mut mixer_data = Vec::new();
+    let all_nodes: std::collections::HashSet<_> = 
+        node_freq_illicit.keys()
+        .chain(node_freq_licit.keys())
+        .collect();
+
+    for node in all_nodes {
+        let illicit = *node_freq_illicit.get(node).unwrap_or(&0) as u32;
+        let licit = *node_freq_licit.get(node).unwrap_or(&0) as u32;
+        let score = illicit as f64 / (licit as f64 + 1.0);  // Avoid division by zero
+        mixer_data.push((node.clone(), licit, illicit, score));
+    }
+
+    mixer_data
+}
+
+fn summarize_scores(score_map: HashMap<String, Vec<f64>>) -> Vec<MixerStats> { // GPT
+    let mut result = vec![];
+    for (node, scores) in score_map {
+        let n = scores.len() as f64;
+        let mean = scores.iter().copied().sum::<f64>() / n;
+        let variance = scores.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / n;
+        let stddev = variance.sqrt();
+        let ci_margin = 1.96 * stddev / n.sqrt(); // 95% CI
+
+        result.push(MixerStats {
+            node,
+            scores,
+            mean,
+            stddev,
+            ci_low: mean - ci_margin,
+            ci_high: mean + ci_margin,
+        });
+    }
+
+    result.sort_by(|a, b| b.mean.partial_cmp(&a.mean).unwrap());
+    result
+}
+
 
 fn main() {
     println!("Reading.");
@@ -137,6 +190,13 @@ fn main() {
 
     println!("Finished reading!");
 
+    let mut licit_nodes = Vec::new();
+    for (k, v) in labels.iter() {
+        if v == "1" {
+            licit_nodes.push(k.to_string());
+        }
+    }
+
     let mut illicit_nodes = Vec::new();
     for (k, v) in labels.iter() {
         if v == "2" {
@@ -144,47 +204,100 @@ fn main() {
         }
     }
 
-    // let nodes = labels.keys().cloned().collect::<Vec<String>>();
-    let batch_size = 100;
-    let mut all_paths = Vec::new();
+    println!("Found illicit nodes");
 
-    for i in (0..illicit_nodes.len()).step_by(batch_size) { // memory problem
-        println!("Ayo let's see where my limit is {}", i);
-        let end = usize::min(i + batch_size, illicit_nodes.len());
-        let batch = &illicit_nodes[i..end].to_vec();
-        let paths = collect_maximal_paths_time_filtered(&edges, &timestamps, batch);
-        all_paths.extend(paths);
-    }
+    let mut score_map: HashMap<String, Vec<f64>> = HashMap::new();
+    let num_runs = 10; // adjust if needed
 
+    for _ in 0..num_runs {
+        let sampled_illicit_nodes = sampler(illicit_nodes.clone(), 100);
+        let sampled_licit_nodes = sampler(licit_nodes.clone(), 100);
+    
+        let node_freq_illicit = theory_tester(&edges, &timestamps, &sampled_illicit_nodes, "illicit");
+        let node_freq_licit = theory_tester(&edges, &timestamps, &sampled_licit_nodes, "licit");
+    
+        let mixer_data = compute_mixer_data(&node_freq_illicit, &node_freq_licit);
 
-    println!("Length of all_paths {}", all_paths.len());
-    println!("{:?}", all_paths.get(0));
-
-    let accounts_from_paths = assign_accounts_from_paths(&all_paths, &timestamps);
-    for (tx, edge) in accounts_from_paths.iter() {
-        // println!("{}: {:?} -> {:?}", tx, edge.start, edge.end);
-    }
-
-    let acc_graph = build_weighted_account_graph(&accounts_from_paths);
-
-    for (from, tos) in acc_graph.iter() {
-        println!("From account {}:", from);
-        for (to, count) in tos {
-            println!("  → to {} ({} times)", to, count);
+        for (node, licit, illicit, score) in mixer_data {
+            score_map.entry(node).or_default().push(score);
         }
     }
 
-    let mut freq_histogram: HashMap<usize, usize> = HashMap::new();
-    for edges in acc_graph.values() {
-        for (_to, count) in edges {
-            *freq_histogram.entry(*count).or_insert(0) += 1;
-        }
+    println!("Almost there!");
+
+    let final_stats = summarize_scores(score_map);
+
+    println!("\nTop 20 Mixer Candidates by Mean Score:");
+    println!("{:<15} {:>10} {:>10} {:>15} {:>20}", 
+        "Node", "Mean", "StdDev", "95% CI Low", "95% CI High");
+
+    for stat in final_stats.iter().take(20) {
+        println!("{:<15} {:>10.2} {:>10.2} {:>15.2} {:>20.2}", 
+            stat.node, stat.mean, stat.stddev, stat.ci_low, stat.ci_high);
     }
 
-    println!("Edge weight distribution:");
-    for (count, freq) in freq_histogram.iter() {
-        println!("Edges with weight {}: {}", count, freq);
+    
+}
+
+#[test]
+fn test_dfs_summarize() {
+    let mut graph: HashMap<String, HashSet<String>> = HashMap::new();
+    graph.insert("A".into(), ["B"].iter().map(|s| s.to_string()).collect());
+    graph.insert("B".into(), ["C", "F"].iter().map(|s| s.to_string()).collect());
+    graph.insert("C".into(), ["F", "D"].iter().map(|s| s.to_string()).collect());
+    graph.insert("D".into(), ["F"].iter().map(|s| s.to_string()).collect());
+    graph.insert("F".into(), HashSet::new());
+
+    let mut ts: HashMap<String, usize> = HashMap::new();
+    ts.insert("A".into(), 1);
+    ts.insert("B".into(), 2);
+    ts.insert("C".into(), 3);
+    ts.insert("D".into(), 4);
+    ts.insert("F".into(), 5);
+
+    let start_nodes = vec!["A".to_string()];
+    let end_nodes = vec!["F".to_string()];
+
+
+    let stats_test = dfsstuff::summarize_paths_to_targets(&graph, &ts, &start_nodes, &end_nodes);
+    for ((start, end), (count, total_depth)) in &stats_test {
+        let avg_depth = *total_depth as f64 / *count as f64;
+        println!("{} → {}: {} paths, avg depth {:.2}", start, end, count, avg_depth);
     }
 
+    let result = stats_test.get(&("A".to_string(), "F".to_string()));
+    
+    let (count, total_depth) = result.unwrap();
+    assert_eq!(*count, 3);
+    assert_eq!(*total_depth, 12);
+}
 
+#[test] // same timestamp
+fn test_dfs_summarize_2() {
+    let mut graph: HashMap<String, HashSet<String>> = HashMap::new();
+    graph.insert("A".into(), ["B"].iter().map(|s| s.to_string()).collect());
+    graph.insert("B".into(), ["C", "F"].iter().map(|s| s.to_string()).collect());
+    graph.insert("C".into(), ["F", "D"].iter().map(|s| s.to_string()).collect());
+    graph.insert("D".into(), ["F"].iter().map(|s| s.to_string()).collect());
+    graph.insert("F".into(), HashSet::new());
+
+    let mut ts: HashMap<String, usize> = HashMap::new();
+    for node in ["A", "B", "C", "D", "F"] {
+        ts.insert(node.to_string(), 1);
+    }
+
+    let start_nodes = vec!["A".to_string()];
+    let end_nodes = vec!["F".to_string()];
+
+
+    let stats_test = dfsstuff::summarize_paths_to_targets(&graph, &ts, &start_nodes, &end_nodes);
+    for ((start, end), (count, total_depth)) in &stats_test {
+        let avg_depth = *total_depth as f64 / *count as f64;
+        println!("{} → {}: {} paths, avg depth {:.2}", start, end, count, avg_depth);
+    }
+    let result = stats_test.get(&("A".to_string(), "F".to_string()));
+
+    let (count, total_depth) = result.unwrap();
+    assert_eq!(*count, 3);
+    assert_eq!(*total_depth, 12);
 }
