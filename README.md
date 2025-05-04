@@ -149,7 +149,11 @@ cargo build --release
 cargo run
 ```
 
-Adjust `num_runs`, `sample_size `, `max_depth `, `max_path` as needed, will vary runtime a **lot**.
+- Adjust `num_runs`, `sample_size `, `max_depth `, `max_path` as needed, will vary runtime a **lot**.
+-  /transactionbased is the code that implements above algorithm, which works for transaction based graphs.
+-  /accountbased has failed attempt of implementing algorithm for account based graphs. 
+
+// Tried mapping transaction based graphs into account based graphs but failed to do so.
 
 **Expected Runtime:**
 \~2–4 minutes depending on machine (due to DFS with depth limits and sampling loop).
