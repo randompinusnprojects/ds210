@@ -1,0 +1,12 @@
+grains: rice, wheat, corn, bran, barley, rye, flour, cassava, kamut, quinoa 
+dairy: milk, yogurt, cream, sour cream, cheese, mozzarella, edam, american cheese, parmesan, greek yogurt
+fruit: apples, pears, watermelon, melon, oranges, lemons, mandarines, bananas, strawberries, blueberries, pineapple, cherries, passion fruit
+eggs: eggs, custard, yolk, egg whites, mayonaise, egg powder
+meat: chicken, turkey, beef, lamb, pork, venison, ham, salami, pepperoni, mortadella, liver, hamburger, snitchel, veal, goat, antelope, spam
+seafood: tuna, salmon, cod, haddock, shrimp, lobster, prawn, sardines, smelt, red snapper, sea bass, sole, urchin, mussels, clams, oysters, sea weed
+vegetables: tomatoes, potatoes, cucumbers, onions, garlic, zuchini, squash, peppers, eggplant, okra, yams, sweet potatoes, fennel, parsley, dill, basil, mint, coriander
+fats/oils: olive oil, margarine, butter, avocado oil, seed oil, sunflower oil, palm oil, lard, ghee, grape oil
+legumes/nuts/seeds: hazelnuts, walnuts, pecans, almonds, peas, peanuts, lentils, beans, lima beans, fava beans, split peas, chick peas, snap peas, brazil nuts
+confections: cocoa, chocolate, sugar, candy, cookies, cake, apple pie, jam, jelly, pecan pie, rhubarb pie, icecream, gelato, jello
+beverages: water, coffee, tea, lemonade, soda, fruit juice, kombucha, orange juice, apple juice, sparkling water, coconut water
+alcohol: beer, wine, whiskey, vodka, gin, tequila, absynth, mescal, ouzo, grapa, rum, brandy, cognac, champagne, sparkling wine
